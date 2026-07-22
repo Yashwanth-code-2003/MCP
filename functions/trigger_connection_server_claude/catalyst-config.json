@@ -1,0 +1,14 @@
+{
+  "deployment": {
+    "name": "trigger_connection_server_claude",
+    "stack": "node24",
+    "type": "job",
+    "env_variables": {
+      "ANTHROPIC_API_KEY": "",
+      "ANTHROPIC_MODEL": "claude-sonnet-4-6"
+    }
+  },
+  "execution": {
+    "main": "index.js"
+  }
+}

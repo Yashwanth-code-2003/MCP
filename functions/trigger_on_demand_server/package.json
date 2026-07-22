@@ -1,0 +1,11 @@
+{
+	"name": "trigger_on_demand_server",
+	"version": "1.0.0",
+	"main": "index.js",
+	"author": "yashwanth.v+mcp@zohotest.com",
+	"dependencies": {
+		"zcatalyst-sdk-node": "latest",
+		"playwright-core": "^1.47.0",
+		"@anthropic-ai/sdk": "^0.112.4"
+	}
+}

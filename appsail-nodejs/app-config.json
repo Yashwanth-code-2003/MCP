@@ -1,0 +1,14 @@
+{
+  "command": "node index.js",
+  "build_path": "./",
+  "stack": "node24",
+  "env_variables": {
+    "ANTHROPIC_API_KEY": "",
+    "ANTHROPIC_MODEL": "claude-sonnet-4-6"
+  },
+  "memory": 256,
+  "scripts": {
+    "preserve": "npm install",
+    "predeploy": "npm install"
+  }
+}

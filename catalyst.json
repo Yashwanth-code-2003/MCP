@@ -1,0 +1,19 @@
+{
+  "appsail": [
+    {
+      "source": "appsail-nodejs",
+      "name": "TriggerMCP"
+    }
+  ],
+  "functions": {
+    "targets": [
+      "trigger_connection_server",
+      "mcp_status_fetcher",
+      "trigger_on_demand_server",
+      "trigger_connection_server_claude",
+      "trigger_on_demand_server_claude"
+    ],
+    "ignore": [],
+    "source": "functions"
+  }
+}

@@ -1,0 +1,11 @@
+{
+	"deployment": {
+		"name": "mcp_status_fetcher",
+		"stack": "node24",
+		"type": "advancedio",
+		"env_variables": {}
+	},
+	"execution": {
+		"main": "index.js"
+	}
+}
