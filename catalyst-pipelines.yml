@@ -7,8 +7,12 @@ jobs:
       - cd /catalyst/functions/trigger_on_demand_server_claude && npm i
       - >-
         catalyst deploy --only
-        functions:trigger_connection_server_claude,functions:trigger_on_demand_server_claude
+        functions:trigger_connection_server_claude,functions:trigger_on_demand_server_claude --verbose
 stages:
   - name: deploy
     jobs:
       - deployFunctions
+runners:
+  high:
+    config-id: 3
+pipeline-runner: high
