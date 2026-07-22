@@ -1,0 +1,14 @@
+version: 1
+jobs:
+  deployFunctions:
+    steps:
+      - npm i -g zcatalyst-cli
+      - cd /Catalyst/functions/trigger_connection_server_claude && npm i
+      - cd /Catalyst/functions/trigger_on_demand_server_claude && npm i
+      - >-
+        catalyst deploy --only
+        functions:trigger_connection_server_claude,functions:trigger_on_demand_server_claude
+stages:
+  - name: deploy
+    jobs:
+      - deployFunctions
