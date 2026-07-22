@@ -3,6 +3,8 @@ jobs:
   deployFunctions:
     steps:
       - npm i -g zcatalyst-cli
+      - pwd
+      - ls
       - cd /Catalyst/functions/trigger_connection_server_claude && npm i
       - cd /Catalyst/functions/trigger_on_demand_server_claude && npm i
       - >-
