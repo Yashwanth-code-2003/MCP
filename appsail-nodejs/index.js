@@ -1,8 +1,9 @@
 import Express from "express";
 import { chromium } from "playwright";
-import Anthropic from "@anthropic-ai/sdk";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { fileURLToPath } from "url";
 import path from "path";
+import os from "os";
 import fs from "fs";
 
 const app = Express();
@@ -13,7 +14,7 @@ const BASE_URL = "https://mcp.localzoho.com/";
 const EMAIL = process.env.MCP_EMAIL || "yashwanth.v+mcp@zohotest.com";
 const PASSWORD = process.env.MCP_PASSWORD || "12345@Catalyst";
 const HEADLESS = process.env.HEADLESS === "1";
-// Claude drives the MCP tool calls via the Anthropic SDK (reads ANTHROPIC_API_KEY).
+// Claude drives the MCP tool calls via the Claude Agent SDK (reads ANTHROPIC_API_KEY).
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-4-8";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -539,166 +540,70 @@ async function grabMcpUrl(page, label = "") {
 }
 
 /**
- * A tiny MCP-over-HTTP (streamable-HTTP) transport. POSTs JSON-RPC, captures/
- * echoes the Mcp-Session-Id header and tolerates responses
- * framed as SSE ("data: {...}" lines) as well as plain JSON.
+ * Verifies the MCP server using the Claude Agent SDK: we declare the MCP server
+ * and the SDK connects to it and runs the whole agent loop. The SDK runs the MCP
+ * client in THIS process (it spawns a local Claude Code subprocess), so an
+ * internal host like mcp.localzoho.com is reachable. "Authorize via Connection"
+ * bakes the key into the URL, so no auth header is needed.
+ *
+ * NOTE: the Agent SDK spawns a bundled Claude Code CLI subprocess; HOME/cwd point
+ * at os.tmpdir() and executable is forced to "node".
  */
-function makeMcpTransport(mcpUrl) {
-  let sessionId = null;
-  const parseBody = (body) => {
-    try {
-      return JSON.parse(body);
-    } catch {}
-    // SSE framing: pick the last "data:" line that parses as JSON.
-    let found = null;
-    for (const line of (body || "").split(/\r?\n/)) {
-      const m = /^data:\s*(.*)$/.exec(line);
-      if (!m) continue;
-      try {
-        found = JSON.parse(m[1]);
-      } catch {}
-    }
-    return found;
-  };
-  const rpc = async (id, method, params) => {
-    const headers = {
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-      ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}),
-    };
-    // A null id marks a JSON-RPC notification (no response expected).
-    const payload = { jsonrpc: "2.0", method, params };
-    if (id !== null) payload.id = id;
-    const res = await fetch(mcpUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
-    const sid = res.headers.get("mcp-session-id");
-    if (sid) sessionId = sid;
-    const body = await res.text();
-    return { status: res.status, json: parseBody(body), body };
-  };
-  return { rpc };
-}
-
-/**
- * Verifies the MCP server the way a real client would: hands the server's tools
- * to Claude (via the Anthropic SDK + ANTHROPIC_API_KEY) and lets Claude decide
- * which to call. Claude runs on Anthropic's side, but the MCP connection itself
- * is opened from THIS process — so an internal host like mcp.localzoho.com works
- * (the Anthropic-hosted MCP connector, which dials out from Anthropic's cloud,
- * could not reach it). We proxy each tool_use Claude emits to tools/call and feed
- * the result back until Claude finishes.
- */
-async function callToolsViaClaude(mcpUrl) {
+async function callToolsViaClaudeAgent(mcpUrl) {
   if (!process.env.ANTHROPIC_API_KEY)
     return { ok: false, error: "ANTHROPIC_API_KEY not set" };
   if (!/^https?:\/\//.test(mcpUrl || ""))
     return { ok: false, error: "no MCP URL captured" };
 
-  const { rpc } = makeMcpTransport(mcpUrl);
-
-  const init = await rpc(1, "initialize", {
-    protocolVersion: "2025-06-18",
-    capabilities: {},
-    clientInfo: { name: "TriggerMCP-Claude", version: "1.0" },
-  });
-  if (init.status === 401) {
-    return {
-      ok: false,
-      authRequired: true,
-      note: "Authorization on Demand — the MCP client must complete OAuth (HTTP 401).",
-    };
-  }
-  if (init.status !== 200 || !init.json?.result) {
-    return {
-      ok: false,
-      error: `initialize failed (HTTP ${init.status})`,
-      body: (init.body || "").slice(0, 200),
-    };
-  }
-  // Per the MCP spec the client sends this after initialize; best-effort.
-  await rpc(null, "notifications/initialized", {}).catch(() => {});
-
-  const list = await rpc(2, "tools/list", {});
-  const mcpTools = list.json?.result?.tools || [];
-  if (!mcpTools.length) return { ok: false, error: "no tools listed" };
-
-  // MCP tool -> Anthropic tool definition.
-  const tools = mcpTools.map((t) => ({
-    name: t.name,
-    description: t.description || "",
-    input_schema: t.inputSchema || { type: "object", properties: {} },
-  }));
-
-  const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from env
-  const messages = [
-    {
-      role: "user",
-      content:
-        "You are connected to an MCP server exposing the tools provided. " +
-        "Call each available tool once to verify it works, then give a brief " +
-        "plain-text summary of what each returned. Call tools ONE AT A TIME " +
-        "(not in parallel): wait for each result before the next call, and reuse " +
-        "identifiers returned by earlier calls (e.g. an organization/project ID) " +
-        "as arguments to dependent later calls instead of guessing placeholder values.",
-    },
-  ];
   const toolsCalled = [];
-  let id = 3;
+  let summary = "";
+  let isError = false;
+  let model = ANTHROPIC_MODEL;
 
-  // Bounded tool-use loop: execute Claude's tool_use blocks against the MCP
-  // server and feed the results back until Claude stops calling tools.
-  for (let turn = 0; turn < 8; turn++) {
-    const resp = await anthropic.messages.create({
+  const run = query({
+    prompt:
+      "You are connected to an MCP server exposing the 'catalyst' tools. " +
+      "Call each available tool once to verify it works, then give a brief " +
+      "plain-text summary of what each returned. Call tools one at a time and " +
+      "reuse identifiers returned by earlier calls (e.g. an organization/project " +
+      "ID) as arguments to dependent later calls instead of guessing placeholders.",
+    options: {
       model: ANTHROPIC_MODEL,
-      max_tokens: 4096,
-      tools,
-      // At most one tool call per turn so Claude sees each result before the
-      // next call — lets dependent calls reuse real IDs instead of placeholders.
-      tool_choice: { type: "auto", disable_parallel_tool_use: true },
-      messages,
-    });
+      // Declare the MCP server; the SDK connects and runs the tool loop for us.
+      // The URL carries the connection key, so no auth header is needed.
+      mcpServers: { catalyst: { type: "http", url: mcpUrl } },
+      allowedTools: ["mcp__catalyst__*"], // only the catalyst MCP tools
+      permissionMode: "bypassPermissions", // non-interactive — no prompts
+      allowDangerouslySkipPermissions: true, // required with bypassPermissions
+      executable: "node", // run the bundled CLI with node (no bun needed)
+      settingSources: [], // ignore any local ~/.claude settings
+      cwd: os.tmpdir(),
+      env: { ...process.env, HOME: os.tmpdir() },
+    },
+  });
 
-    if (resp.stop_reason !== "tool_use") {
-      const summary = resp.content
-        .filter((b) => b.type === "text")
-        .map((b) => b.text)
-        .join("\n")
-        .trim();
-      return { ok: true, model: resp.model, toolsCalled, summary };
+  for await (const message of run) {
+    // Track MCP tool calls as Claude makes them (best-effort, for reporting).
+    if (message.type === "assistant" && message.message?.content) {
+      for (const block of message.message.content) {
+        if (
+          block.type === "tool_use" &&
+          String(block.name || "").startsWith("mcp__")
+        ) {
+          toolsCalled.push({ tool: block.name });
+        }
+      }
     }
-
-    messages.push({ role: "assistant", content: resp.content });
-
-    const toolResults = [];
-    for (const block of resp.content) {
-      if (block.type !== "tool_use") continue;
-      const call = await rpc(id++, "tools/call", {
-        name: block.name,
-        arguments: block.input || {},
-      });
-      const result = call.json?.result;
-      const isError = !!result?.isError;
-      const text =
-        result?.content?.[0]?.text ??
-        JSON.stringify(result?.structuredContent ?? result ?? {}).slice(
-          0,
-          2000,
-        );
-      toolsCalled.push({ tool: block.name, isError });
-      toolResults.push({
-        type: "tool_result",
-        tool_use_id: block.id,
-        content: String(text),
-        is_error: isError,
-      });
+    // The terminal "result" message carries the final text + error flag.
+    if (message.type === "result") {
+      isError = !!message.is_error;
+      summary = message.result || "";
+      const used = message.modelUsage && Object.keys(message.modelUsage);
+      if (used && used.length) model = used[0];
     }
-    messages.push({ role: "user", content: toolResults });
   }
 
-  return { ok: false, error: "tool-use loop did not converge", toolsCalled };
+  return { ok: !isError, model, toolsCalled, summary };
 }
 
 /**
@@ -709,22 +614,22 @@ async function callToolsViaClaude(mcpUrl) {
  */
 async function createViaConnectionServer(serverName) {
   // --- Option A: launch a local Chromium (default; headed for now) ---
-  console.log(`Launching Chromium (headless=${HEADLESS})...`);
-  const browser = await chromium.launch({
-    headless: HEADLESS,
-    slowMo: 200,
-    args: ["--start-maximized"],
-  });
+  // console.log(`Launching Chromium (headless=${HEADLESS})...`);
+  // const browser = await chromium.launch({
+  //   headless: HEADLESS,
+  //   slowMo: 200,
+  //   args: ["--start-maximized"],
+  // });
 
   // --- Option B: connect to Catalyst SmartBrowz remote (headless) Chrome ---
   // NOTE: this project uses Playwright, so we use chromium.connectOverCDP() —
   // the equivalent of puppeteer.connect({ browserWSEndpoint }). The SmartBrowz
   // endpoint is a CDP WebSocket. Comment this block and uncomment Option A to
   // go back to the local browser.
-  // const WebUrl =
-  //   "ws://browser360.localcatalystserverless.app/hub?project-id=21961000000017052&grid-id=2745000002385011&api-key=a3bfed13e60531de93645960be18ff3557473ced307b56c872e5ab62a5f964df1148285f95b11ce2dc0e15b428546989494adb3749519fad8d90acaa3cc19c79";
-  // console.log(`Connecting to Catalyst SmartBrowz (CDP)...`);
-  // const browser = await chromium.connectOverCDP(WebUrl);
+  const WebUrl =
+    "ws://browser360.localcatalystserverless.app/hub?project-id=21961000000017052&grid-id=2745000002385011&api-key=a3bfed13e60531de93645960be18ff3557473ced307b56c872e5ab62a5f964df1148285f95b11ce2dc0e15b428546989494adb3749519fad8d90acaa3cc19c79";
+  console.log(`Connecting to Catalyst SmartBrowz (CDP)...`);
+  const browser = await chromium.connectOverCDP(WebUrl);
   const context = await browser.newContext({
     viewport: null,
     storageState: fs.existsSync(AUTH_FILE) ? AUTH_FILE : undefined,
@@ -745,13 +650,17 @@ async function createViaConnectionServer(serverName) {
     await configureConnection(page); // switch to "Authorize via Connection" + authorize
     const mcpUrl = await grabMcpUrl(page).catch(() => "");
 
-    // Verify the server by driving its tools with Claude via the Anthropic SDK:
-    // Claude picks the tools to call; this process proxies them to the MCP server.
-    console.log(`\nExecuting the tools via Claude on "${serverName}"...`);
-    const claudeExecution = await callToolsViaClaude(mcpUrl).catch((e) => ({
-      ok: false,
-      error: e.message,
-    }));
+    // Verify the server by driving its tools with the Claude Agent SDK: we declare
+    // the MCP server and the SDK connects and runs the agent loop.
+    console.log(
+      `\nExecuting the tools via the Claude Agent SDK on "${serverName}"...`,
+    );
+    const claudeExecution = await callToolsViaClaudeAgent(mcpUrl).catch(
+      (e) => ({
+        ok: false,
+        error: e.message,
+      }),
+    );
     console.log(`  → ${JSON.stringify(claudeExecution)}`);
 
     // Leave the browser open on purpose (headed run for inspection).

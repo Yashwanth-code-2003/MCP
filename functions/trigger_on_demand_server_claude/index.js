@@ -38,7 +38,7 @@ const EMAIL = process.env.MCP_EMAIL || "yashwanth.v+mcp@zohotest.com";
 const PASSWORD = process.env.MCP_PASSWORD || "12345@Catalyst";
 const WEB_URL =
   process.env.SMARTBROWZ_WS ||
-  "ws://browser360.localcatalystserverless.app/hub?project-id=21961000000017052&grid-id=2745000002385011&api-key=a3bfed13e60531de93645960be18ff3557473ced307b56c872e5ab62a5f964df1148285f95b11ce2dc0e15b428546989494adb3749519fad8d90acaa3cc19c79";
+  "ws://browser360internal.localcatalystserverless.app/hub?project-id=21961000000017052&grid-id=2745000002385011&api-key=a3bfed13e60531de93645960be18ff3557473ced307b56c872e5ab62a5f964df1148285f95b11ce2dc0e15b428546989494adb3749519fad8d90acaa3cc19c79";
 // Loopback redirect used by the OAuth client. It never actually loads (connection
 // refused); we read the ?code= off the redirect request URL.
 const REDIRECT_URI = "http://localhost:53682/callback";
@@ -50,9 +50,15 @@ const SHOTS_DIR = path.join(os.tmpdir(), "screenshots");
 const AUTH_FILE = path.join(os.tmpdir(), "auth.json");
 fs.mkdirSync(SHOTS_DIR, { recursive: true });
 
-const cacheKey = (name) => "mcpresult_" + String(name).replace(/[^a-zA-Z0-9]/g, "");
+const cacheKey = (name) =>
+  "mcpresult_" + String(name).replace(/[^a-zA-Z0-9]/g, "");
 const maskKey = (url) => (url || "").replace(/\/mcp\/[^/]+\//, "/mcp/****/");
-const b64url = (buf) => buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const b64url = (buf) =>
+  buf
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 
 function makeServerName(prefix = "ServerOnDemand") {
   const stamp = new Date().toISOString().slice(11, 19).replace(/:/g, "");
@@ -60,7 +66,9 @@ function makeServerName(prefix = "ServerOnDemand") {
 }
 
 async function shot(page, name) {
-  await page.screenshot({ path: path.join(SHOTS_DIR, `${name}.png`), fullPage: true }).catch(() => {});
+  await page
+    .screenshot({ path: path.join(SHOTS_DIR, `${name}.png`), fullPage: true })
+    .catch(() => {});
 }
 
 async function login(page) {
@@ -73,10 +81,15 @@ async function login(page) {
       await page.goto(BASE_URL, { waitUntil: "commit", timeout: 90000 });
       navigated = true;
     } catch (e) {
-      console.log(`goto attempt ${attempt} failed: ${(e.message || "").split("\n")[0]}`);
+      console.log(
+        `goto attempt ${attempt} failed: ${(e.message || "").split("\n")[0]}`,
+      );
     }
   }
-  if (!navigated) throw new Error(`could not load ${BASE_URL} (SmartBrowz navigation timeout)`);
+  if (!navigated)
+    throw new Error(
+      `could not load ${BASE_URL} (SmartBrowz navigation timeout)`,
+    );
   await page.waitForLoadState("domcontentloaded").catch(() => {});
   await page.waitForLoadState("networkidle").catch(() => {});
   if (!/accounts\.localzoho\.com/.test(page.url())) {
@@ -84,22 +97,42 @@ async function login(page) {
     return;
   }
   console.log("Signing in...");
-  const emailField = page.locator("#login_id, input[name='LOGIN_ID'], input[type='email']").first();
+  const emailField = page
+    .locator("#login_id, input[name='LOGIN_ID'], input[type='email']")
+    .first();
   // The accounts page sometimes opens on the "Smart Sign-in via OneAuth" (QR)
   // screen, where the email field is hidden. Switch to email/password sign-in.
   if (!(await emailField.isVisible().catch(() => false))) {
-    console.log("Smart Sign-in screen detected — switching to email sign-in...");
-    await page.getByText(/sign in via email/i).first().click({ timeout: 10000 }).catch(() => {});
+    console.log(
+      "Smart Sign-in screen detected — switching to email sign-in...",
+    );
+    await page
+      .getByText(/sign in via email/i)
+      .first()
+      .click({ timeout: 10000 })
+      .catch(() => {});
     await page.waitForTimeout(1500);
   }
   await emailField.waitFor({ state: "visible", timeout: 30000 });
   await emailField.fill(EMAIL);
-  await page.locator("#nextbtn, #nextbtn_myzoho, button:has-text('Next')").first().click();
-  const pwField = page.locator("#password, input[name='PASSWORD'], input[type='password']").first();
+  await page
+    .locator("#nextbtn, #nextbtn_myzoho, button:has-text('Next')")
+    .first()
+    .click();
+  const pwField = page
+    .locator("#password, input[name='PASSWORD'], input[type='password']")
+    .first();
   await pwField.waitFor({ state: "visible" });
   await pwField.fill(PASSWORD);
-  await page.locator("#nextbtn, button:has-text('Sign in'), #signin_submit").first().click();
-  await page.waitForFunction(() => window.location.hostname === "mcp.localzoho.com", undefined, { timeout: 90000 });
+  await page
+    .locator("#nextbtn, button:has-text('Sign in'), #signin_submit")
+    .first()
+    .click();
+  await page.waitForFunction(
+    () => window.location.hostname === "mcp.localzoho.com",
+    undefined,
+    { timeout: 90000 },
+  );
 }
 
 /** On the server-list page: open the create modal, name it, submit. Returns the URL. */
@@ -127,13 +160,23 @@ async function createServerViaModal(page, serverName) {
   await nameField.dispatchEvent("change");
   await nameField.evaluate((el) => el.blur());
   await page.waitForTimeout(400);
-  const submitBtn = page.locator(".lytePrimaryBtn").filter({ hasText: /create/i }).last();
+  const submitBtn = page
+    .locator(".lytePrimaryBtn")
+    .filter({ hasText: /create/i })
+    .last();
   await submitBtn.click({ timeout: 10000 }).catch(async () => {
-    await page.getByRole("button", { name: /^create$/i }).last().click({ force: true });
+    await page
+      .getByRole("button", { name: /^create$/i })
+      .last()
+      .click({ force: true });
   });
   await Promise.race([
     nameField.waitFor({ state: "detached", timeout: 30000 }).catch(() => {}),
-    page.getByText(serverName, { exact: false }).first().waitFor({ timeout: 30000 }).catch(() => {}),
+    page
+      .getByText(serverName, { exact: false })
+      .first()
+      .waitFor({ timeout: 30000 })
+      .catch(() => {}),
   ]);
   await page.waitForTimeout(2500);
   await shot(page, `created-${serverName}`);
@@ -161,7 +204,10 @@ async function addCatalystTool(page) {
   await item.click();
   await page.waitForTimeout(2000);
 
-  await page.getByRole("button", { name: /add now/i }).first().waitFor({ state: "visible", timeout: 15000 });
+  await page
+    .getByRole("button", { name: /add now/i })
+    .first()
+    .waitFor({ state: "visible", timeout: 15000 });
 
   // Tick the "Organization" group.
   const orgCard = page
@@ -235,27 +281,43 @@ async function addCatalystTool(page) {
       .catch(() => false);
   }
   if (!projTicked)
-    console.log('WARN: could not tick "List All Projects" — adding Organization only.');
+    console.log(
+      'WARN: could not tick "List All Projects" — adding Organization only.',
+    );
   await page.waitForTimeout(800);
   await shot(page, "projects-ticked");
 
   const addNow = page.getByRole("button", { name: /add now/i }).first();
   await addNow.click({ timeout: 10000 }).catch(async () => {
-    await page.locator(".lytePrimaryBtn").filter({ hasText: /add now/i }).last().click({ force: true });
+    await page
+      .locator(".lytePrimaryBtn")
+      .filter({ hasText: /add now/i })
+      .last()
+      .click({ force: true });
   });
   await page.waitForTimeout(2500);
   await shot(page, "tool-added");
-  console.log(`Ticked "Organization" + "List All Projects" and clicked "Add Now".`);
+  console.log(
+    `Ticked "Organization" + "List All Projects" and clicked "Add Now".`,
+  );
 }
 
 /** On a server: open the Connect tab and copy the (unmasked) MCP Server URL. */
 async function grabMcpUrl(page) {
   console.log(`Fetching the MCP Server URL...`);
-  await page.getByText(/^connect$/i).first().click();
+  await page
+    .getByText(/^connect$/i)
+    .first()
+    .click();
   await page.waitForTimeout(2500);
-  await page.locator("span.mcp-copy-btn, lyte-svg[lt-prop-path*=copy]").first().click();
+  await page
+    .locator("span.mcp-copy-btn, lyte-svg[lt-prop-path*=copy]")
+    .first()
+    .click();
   await page.waitForTimeout(600);
-  const url = await page.evaluate(() => navigator.clipboard.readText().catch(() => ""));
+  const url = await page.evaluate(() =>
+    navigator.clipboard.readText().catch(() => ""),
+  );
   console.log(`  MCP URL: ${maskKey(url)}`);
   return url;
 }
@@ -268,8 +330,15 @@ async function grabMcpUrl(page) {
  */
 async function authorizeOnDemand(context, mcpUrl) {
   const origin = new URL(mcpUrl).origin;
-  const meta = await (await fetch(origin + "/.well-known/oauth-authorization-server")).json();
-  const scope = (meta.scopes_supported || ["ZohoCatalyst.projects.READ", "ZohoMCP.tool.execute"]).join(" ");
+  const meta = await (
+    await fetch(origin + "/.well-known/oauth-authorization-server")
+  ).json();
+  const scope = (
+    meta.scopes_supported || [
+      "ZohoCatalyst.projects.READ",
+      "ZohoMCP.tool.execute",
+    ]
+  ).join(" ");
 
   // Dynamic client registration (public PKCE client).
   const reg = await (
@@ -286,12 +355,15 @@ async function authorizeOnDemand(context, mcpUrl) {
       }),
     })
   ).json();
-  if (!reg.client_id) return { ok: false, error: "OAuth: client registration failed", reg };
+  if (!reg.client_id)
+    return { ok: false, error: "OAuth: client registration failed", reg };
   console.log(`Registered OAuth client ${reg.client_id}`);
 
   // PKCE + authorize URL.
   const verifier = b64url(crypto.randomBytes(32));
-  const challenge = b64url(crypto.createHash("sha256").update(verifier).digest());
+  const challenge = b64url(
+    crypto.createHash("sha256").update(verifier).digest(),
+  );
   const state = b64url(crypto.randomBytes(8));
   const authUrl =
     meta.authorization_endpoint +
@@ -313,7 +385,8 @@ async function authorizeOnDemand(context, mcpUrl) {
   // Also listen on nav events and parse the code from query (?code=) OR fragment.
   let authCode = null;
   const grabCode = (u) => {
-    if (authCode || typeof u !== "string" || !u.startsWith(REDIRECT_ORIGIN)) return;
+    if (authCode || typeof u !== "string" || !u.startsWith(REDIRECT_ORIGIN))
+      return;
     try {
       const url = new URL(u);
       authCode =
@@ -336,7 +409,9 @@ async function authorizeOnDemand(context, mcpUrl) {
   // Drive the consent screens (log whether each control actually fired).
   const authPage = await context.newPage();
   console.log("Opening authorize/consent page...");
-  await authPage.goto(authUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
+  await authPage
+    .goto(authUrl, { waitUntil: "domcontentloaded" })
+    .catch(() => {});
   await authPage.waitForTimeout(3000);
   await shot(authPage, "oauth-consent-1");
 
@@ -356,7 +431,10 @@ async function authorizeOnDemand(context, mcpUrl) {
     );
 
   // Screen 2: Zoho OAuth data consent -> tick "I allow ..." checkbox, then Accept.
-  await authPage.locator("#user-consent-check").waitFor({ state: "visible", timeout: 20000 }).catch(() => {});
+  await authPage
+    .locator("#user-consent-check")
+    .waitFor({ state: "visible", timeout: 20000 })
+    .catch(() => {});
   const consentChecked = await authPage
     .locator("#user-consent-check")
     .check({ force: true })
@@ -395,7 +473,9 @@ async function authorizeOnDemand(context, mcpUrl) {
   }
   await shot(authPage, "oauth-after-consent");
   if (!authCode) {
-    console.log(`OAuth: no code captured. Final consent-tab URL: ${authPage.url()}`);
+    console.log(
+      `OAuth: no code captured. Final consent-tab URL: ${authPage.url()}`,
+    );
     return { ok: false, error: "OAuth: no authorization code captured" };
   }
   console.log("Authorization code captured; exchanging for a token...");
@@ -414,7 +494,8 @@ async function authorizeOnDemand(context, mcpUrl) {
       }),
     })
   ).json();
-  if (!tok.access_token) return { ok: false, error: "OAuth: token exchange failed", token: tok };
+  if (!tok.access_token)
+    return { ok: false, error: "OAuth: token exchange failed", token: tok };
   console.log("Access token obtained.");
   return { ok: true, accessToken: tok.access_token };
 }
@@ -479,7 +560,10 @@ async function callToolsViaClaudeAgent(mcpUrl, bearer) {
     // Track MCP tool calls as Claude makes them (best-effort, for reporting).
     if (message.type === "assistant" && message.message?.content) {
       for (const block of message.message.content) {
-        if (block.type === "tool_use" && String(block.name || "").startsWith("mcp__")) {
+        if (
+          block.type === "tool_use" &&
+          String(block.name || "").startsWith("mcp__")
+        ) {
           toolsCalled.push({ tool: block.name });
         }
       }
@@ -505,18 +589,18 @@ async function createOnDemandServer(serverName) {
   // `npx playwright install chromium`, then comment Option B and uncomment this.
   // Keep HEADLESS unset to watch it. (Option B is the one that works in a job.)
   // const HEADLESS = process.env.HEADLESS === "1";
-  // console.log(`Launching Chromium (headless=${HEADLESS})...`);
-  // const browser = await chromium.launch({
-  //   headless: HEADLESS,
-  //   slowMo: 200,
-  //   args: ["--start-maximized"],
-  // });
+  console.log(`Launching Chromium (headless=${HEADLESS})...`);
+  const browser = await chromium.launch({
+    headless: HEADLESS,
+    slowMo: 200,
+    args: ["--start-maximized"],
+  });
 
   // --- Option B: connect to Catalyst SmartBrowz remote (headless) Chrome ---
   // connectOverCDP is the Playwright equivalent of puppeteer.connect({ browserWSEndpoint }).
   // This is the mode that works inside a job (no local display / no bundled browser).
-  console.log(`Connecting to Catalyst SmartBrowz (CDP)...`);
-  const browser = await chromium.connectOverCDP(WEB_URL);
+  // console.log(`Connecting to Catalyst SmartBrowz (CDP)...`);
+  // const browser = await chromium.connectOverCDP(WEB_URL);
   const context = await browser.newContext({
     viewport: null,
     storageState: fs.existsSync(AUTH_FILE) ? AUTH_FILE : undefined,
@@ -537,15 +621,30 @@ async function createOnDemandServer(serverName) {
 
     // On-demand servers require per-client OAuth — obtain a bearer token first.
     console.log(`\nRunning on-demand OAuth for "${serverName}"...`);
-    const auth = await authorizeOnDemand(context, mcpUrl).catch((e) => ({ ok: false, error: e.message }));
+    const auth = await authorizeOnDemand(context, mcpUrl).catch((e) => ({
+      ok: false,
+      error: e.message,
+    }));
     if (!auth.ok) {
       console.log(`  → OAuth failed: ${JSON.stringify(auth)}`);
-      return { ok: false, server: { name: serverName, mcpUrl: maskKey(mcpUrl), claudeExecution: auth } };
+      return {
+        ok: false,
+        server: {
+          name: serverName,
+          mcpUrl: maskKey(mcpUrl),
+          claudeExecution: auth,
+        },
+      };
     }
 
     // Verify the server with the Claude Agent SDK (using the bearer token).
-    console.log(`\nExecuting the tools via the Claude Agent SDK on "${serverName}"...`);
-    const claudeExecution = await callToolsViaClaudeAgent(mcpUrl, auth.accessToken).catch((e) => ({
+    console.log(
+      `\nExecuting the tools via the Claude Agent SDK on "${serverName}"...`,
+    );
+    const claudeExecution = await callToolsViaClaudeAgent(
+      mcpUrl,
+      auth.accessToken,
+    ).catch((e) => ({
       ok: false,
       error: e.message,
     }));
@@ -569,7 +668,8 @@ async function createOnDemandServer(serverName) {
  * @param {import("./types/job").Context} context
  */
 module.exports = async (jobRequest, context) => {
-  const name = jobRequest.getJobParam("name") || makeServerName("ServerOnDemand");
+  const name =
+    jobRequest.getJobParam("name") || makeServerName("ServerOnDemand");
   let result;
   try {
     console.log(`Job started — on-demand MCP server: "${name}"`);
@@ -577,7 +677,11 @@ module.exports = async (jobRequest, context) => {
     console.log("JOB RESULT:", JSON.stringify(result));
   } catch (err) {
     console.error("Job failed:", err && err.stack ? err.stack : err);
-    result = { ok: false, server: { name }, error: err && err.message ? err.message : String(err) };
+    result = {
+      ok: false,
+      server: { name },
+      error: err && err.message ? err.message : String(err),
+    };
   }
 
   // Persist result to Catalyst Cache (keyed by server name) for mcp_status_fetcher.
